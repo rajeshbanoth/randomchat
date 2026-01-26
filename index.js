@@ -9,6 +9,9 @@ const MatchingEngine = require("./matching-engine");
 
 // --- Config ---
 const SOCKET_ORIGIN = process.env.SOCKET_ORIGIN || "http://localhost:3000";
+
+const ALLOWED_ORIGINS = ["http://localhost:3000", "http://13.60.191.64"];
+
 const PORT = process.env.PORT || 5000;
 const INACTIVE_THRESHOLD_MS = 5 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 1000;
@@ -29,7 +32,7 @@ console.log(
 );
 const io = socketIo(server, {
   cors: {
-    origin: SOCKET_ORIGIN,
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -38,7 +41,22 @@ const io = socketIo(server, {
 });
 
 console.log(`[Server] Setting up CORS middleware`);
-app.use(cors({ origin: SOCKET_ORIGIN, credentials: true }));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // allow requests with no origin (mobile apps, curl, etc)
+      if (!origin) return callback(null, true);
+
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  }),
+);
+
 app.use(express.json());
 
 // --- Core state ---
