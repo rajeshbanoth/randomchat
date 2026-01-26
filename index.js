@@ -251,8 +251,10 @@ function startSearch(socketId, options = {}) {
       throw new Error("User not registered");
     }
 
+    console.log(`[startSearch] User data ${options}`);
+
     const socket = userWrapper.socket;
-    const chatMode = userWrapper.profile.mode || "text";
+    const chatMode = options.mode || "text";
 
     console.log(`[startSearch] User details:`, {
       username: userWrapper.profile.username,
