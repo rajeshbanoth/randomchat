@@ -235,7 +235,7 @@ function startSearch(socketId, options = {}) {
     }
     
     const socket = userWrapper.socket;
-    const chatMode = userWrapper.profile.chatMode || "text";
+    const chatMode = userWrapper.profile.mode || "text";
     
     console.log(`[startSearch] User details:`, {
       username: userWrapper.profile.username,
@@ -1098,58 +1098,113 @@ function disconnectPair(userId1, userId2, reason = "manual") {
 }
 
 // Typing handlers
-function typingStart(userId) {
-  console.log(`[typingStart] User started typing: ${userId}`);
-  
-  try {
-    const user = activeUsers.get(userId);
-    if (!user || !user.partnerId) {
-      console.warn(`[typingStart] User or partner not found: ${userId}`);
-      return;
-    }
 
+function typingStart(socketId) {
+  try {
+    const user = activeUsers.get(socketId);
+    if (!user || !user.partnerId) return false;
     const partner = activeUsers.get(user.partnerId);
-    if (partner && partner.socket) {
-      safeEmit(partner.socket, "typing", {
-        userId,
+    if (!partner) return false;
+
+    // reset timeout
+    if (typingUsers.has(socketId))
+      clearTimeout(typingUsers.get(socketId).timeout);
+
+    const timeout = setTimeout(() => {
+      typingUsers.delete(socketId);
+      safeEmit(partner.socket, "partnerTypingStopped", {
+        userId: socketId,
         timestamp: Date.now(),
       });
-    }
+    }, 3000);
 
-    // Clear existing timeout
-    if (typingUsers.has(userId)) {
-      clearTimeout(typingUsers.get(userId).timeout);
-    }
+    typingUsers.set(socketId, {
+      lastTyped: Date.now(),
+      timeout,
+      isTyping: true,
+    });
 
-    // Set timeout to automatically stop typing after 3 seconds
-    const timeout = setTimeout(() => typingStop(userId), 3000);
-    typingUsers.set(userId, { timeout, timestamp: Date.now() });
+    safeEmit(partner.socket, "partnerTyping", {
+      userId: socketId,
+      username: user.profile.username,
+      timestamp: Date.now(),
+      action: "typing_started",
+    });
+    return true;
   } catch (err) {
-    console.error("[typingStart] Error:", err);
+    console.error("[typingStart] error:", err);
+    return false;
   }
 }
 
-function typingStop(userId) {
-  console.log(`[typingStop] User stopped typing: ${userId}`);
-  
+function typingStop(socketId) {
   try {
-    const user = activeUsers.get(userId);
-    if (!user || !user.partnerId) return;
-
+    const user = activeUsers.get(socketId);
+    if (!user || !user.partnerId) return false;
     const partner = activeUsers.get(user.partnerId);
-    if (partner && partner.socket) {
-      safeEmit(partner.socket, "typingStopped", {
-        userId,
-        timestamp: Date.now(),
-      });
+    if (!partner) return false;
+
+    if (typingUsers.has(socketId)) {
+      clearTimeout(typingUsers.get(socketId).timeout);
+      typingUsers.delete(socketId);
     }
 
-    if (typingUsers.has(userId)) {
-      clearTimeout(typingUsers.get(userId).timeout);
-      typingUsers.delete(userId);
-    }
+    safeEmit(partner.socket, "partnerTypingStopped", {
+      userId: socketId,
+      timestamp: Date.now(),
+      action: "typing_stopped",
+    });
+    return true;
   } catch (err) {
-    console.error("[typingStop] Error:", err);
+    console.error("[typingStop] error:", err);
+    return false;
+  }
+}
+
+
+function sendMessage(socketId, data = {}) {
+  try {
+    const sender = activeUsers.get(socketId);
+    if (!sender) throw new Error("Sender not registered");
+    if (!sender.partnerId) throw new Error("No partner to send message");
+
+    const partner = activeUsers.get(sender.partnerId);
+    if (!partner) throw new Error("Partner not found");
+
+    if (!data || typeof data.text !== "string")
+      throw new Error("Invalid message");
+
+    const text = data.text.trim().substring(0, 1000);
+    if (!text) throw new Error("Empty message");
+
+    const message = {
+      text,
+      from: socketId,
+      timestamp: Date.now(),
+      senderName: sender.profile.username,
+      messageId: uuidv4(),
+    };
+
+    // Save history
+    if (!messageHistory.has(socketId)) messageHistory.set(socketId, []);
+    messageHistory.get(socketId).push(message);
+
+    // Emit
+    safeEmit(partner.socket, "message", message);
+    safeEmit(sender.socket, "message-sent", {
+      messageId: message.messageId,
+      timestamp: message.timestamp,
+    });
+
+    console.info(
+      `[sendMessage] ${socketId} -> ${sender.partnerId}: ${text.substring(0, 40)}`,
+    );
+    return message;
+  } catch (err) {
+    console.error("[sendMessage] error:", err);
+    const s = activeUsers.get(socketId)?.socket;
+    if (s) safeEmit(s, "message-error", { error: err.message });
+    return null;
   }
 }
 
@@ -1182,6 +1237,10 @@ function updateStats() {
   }
 }
 
+
+//     socket.on("message", (data) => {
+//       sendMessage(socket.id, data);
+//     });
 // --- Socket.IO Event Handlers (Updated) ---
 io.on("connection", (socket) => {
   console.info(`[Socket.IO] New connection: ${socket.id}`, {
@@ -1230,6 +1289,8 @@ io.on("connection", (socket) => {
       console.log(`[Socket.IO] Message event from: ${socket.id}`, {
         data: { ...data, timestamp: Date.now() }
       });
+
+       sendMessage(socket.id, data);
       // ... existing message handler ...
     });
 
