@@ -6,7 +6,13 @@ const socketIo = require("socket.io");
 const cors = require("cors");
 const { v4: uuidv4 } = require("uuid");
 const MatchingEngine = require("./matching-engine");
-
+const nodemailer = require("nodemailer");
+const {
+  generateTicketNumber,
+  getEstimatedResponse,
+  generateUserEmailHTML,
+  generateSupportEmailHTML,
+} = require("./functions/email");
 // --- Config ---
 const SOCKET_ORIGIN = process.env.SOCKET_ORIGIN || "http://localhost:3000";
 
@@ -15,6 +21,7 @@ const ALLOWED_ORIGINS = [
   "http://13.60.191.64",
   "https://winkcc.vercel.app",
   "https://blinkchatapp.vercel.app/",
+  "https://omeglechatapp.vercel.app",
 ];
 
 const PORT = process.env.PORT || 5000;
@@ -63,6 +70,42 @@ app.use(
 );
 
 app.use(express.json());
+
+// Configure Nodemailer transporter
+// const transporter = nodemailer.createTransport({
+//   host: process.env.SMTP_HOST || 'smtp.gmail.com',
+//   port: process.env.SMTP_PORT || 587,
+//   secure: false,
+//   auth: {
+//     user: process.env.SMTP_USER,
+//     pass: process.env.SMTP_PASS
+//   },
+//   tls: {
+//     rejectUnauthorized: false
+//   }
+// });
+
+// Email Transport - Recommended for Zoho personal/free accounts
+// Email Transport
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: process.env.SMTP_PORT,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+// Verify on startup - add this immediately after creating transporter
+transporter.verify((error, success) => {
+  if (error) {
+    console.error("❌ SMTP Verification Failed:", error);
+    console.error("Full error object:", JSON.stringify(error, null, 2));
+  } else {
+    console.log("✅ SMTP connection verified! Ready to send via Zoho.");
+  }
+});
 
 // --- Core state ---
 console.log(`[Server] Initializing data structures`);
@@ -278,6 +321,9 @@ function startSearch(socketId, options = {}) {
 
     const socket = userWrapper.socket;
     const chatMode = options.mode || "text";
+    // 🔑 SAVE chat mode on user profile (VERY IMPORTANT)
+userWrapper.profile.chatMode = chatMode;
+
 
     console.log(`[startSearch] User details:`, {
       username: userWrapper.profile.username,
@@ -347,65 +393,78 @@ function startSearch(socketId, options = {}) {
 
 // --- Attempt Immediate Match (Updated) ---
 function attemptImmediateMatch(userId) {
-  console.log(
-    `[attemptImmediateMatch] Attempting immediate match for: ${userId}`,
-  );
+  console.log(`[attemptImmediateMatch] Attempting immediate match for: ${userId}`);
 
   try {
     const user = activeUsers.get(userId);
     if (!user || user.status !== "searching") {
-      console.warn(
-        `[attemptImmediateMatch] User not found or not searching: ${userId}`,
-      );
+      console.warn(`[attemptImmediateMatch] User not found or not searching: ${userId}`);
       return false;
     }
 
-    const userChatMode = user.profile.chatMode;
+    console.log(user,"checking userer")
+
+    const userChatMode = user.profile.chatMode; // "video" | "text"
     console.log(`[attemptImmediateMatch] User chat mode: ${userChatMode}`);
 
     let match = null;
 
-    // Try to find video match if user wants video
+    // 🔒 STRICT MODE MATCHING
     if (userChatMode === "video") {
-      console.log(`[attemptImmediateMatch] Looking for video match`);
+      console.log(`[attemptImmediateMatch] Searching VIDEO-only partner`);
       match = matchingEngine.findVideoMatch(userId);
-      if (match) {
-        console.log(`[attemptImmediateMatch] Found video match:`, {
-          partnerId: match.partnerId,
-          score: match.score,
-        });
-      }
+    } else {
+      console.log(`[attemptImmediateMatch] Searching TEXT-only partner`);
+      match = matchingEngine.findMatch(userId);
     }
 
-    // If no video match found, try regular match
-    if (!match) {
-      console.log(`[attemptImmediateMatch] Looking for regular match`);
-      match = matchingEngine.findMatch(userId);
-      if (match) {
-        console.log(`[attemptImmediateMatch] Found regular match:`, {
-          partnerId: match.partnerId,
-          score: match.score,
-        });
-      }
-    }
 
     if (match && match.partnerId) {
-      console.log(`[attemptImmediateMatch] Match found, calling instantMatch`);
-      const result = instantMatch(
-        userId,
-        match.partnerId,
-        match.score || 50,
-        match.mode || userChatMode,
-      );
+  const partner = activeUsers.get(match.partnerId);
 
-      console.log(`[attemptImmediateMatch] instantMatch result: ${result}`);
-      return true;
-    }
-
-    // Start interval for continued searching
-    console.log(
-      `[attemptImmediateMatch] No immediate match found, starting matching interval`,
+  // 🚫 HARD BLOCK mixed mode
+  if (!partner || partner.profile.chatMode !== userChatMode) {
+    console.warn(
+      "[STRICT MODE BLOCK]",
+      userChatMode,
+      "≠",
+      partner?.profile?.chatMode
     );
+    return false;
+  }
+
+  console.log("[STRICT MODE PASS] Matching users:", {
+    user: userId,
+    partner: match.partnerId,
+    mode: userChatMode,
+  });
+
+  instantMatch(
+    userId,
+    match.partnerId,
+    match.score || 50,
+    userChatMode
+  );
+
+  return true;
+}
+
+
+    // if (match && match.partnerId) {
+    //   console.log(`[attemptImmediateMatch] Match found`, match);
+
+    //   instantMatch(
+    //     userId,
+    //     match.partnerId,
+    //     match.score || 50,
+    //     userChatMode
+    //   );
+
+    //   return true;
+    // }
+
+    // ⏳ No match → continue searching
+    console.log(`[attemptImmediateMatch] No match found, starting interval`);
     startMatchingInterval(userId);
 
     safeEmit(user.socket, "searching", {
@@ -414,16 +473,13 @@ function attemptImmediateMatch(userId) {
       message: `Searching for ${userChatMode} partner...`,
     });
 
-    console.log(`[attemptImmediateMatch] No immediate match for ${userId}`);
     return false;
   } catch (err) {
-    console.error("[attemptImmediateMatch] Error:", err, {
-      userId,
-      stack: err.stack,
-    });
+    console.error("[attemptImmediateMatch] Error:", err);
     return false;
   }
 }
+
 
 // Start matching interval for a user
 function startMatchingInterval(userId) {
@@ -1936,7 +1992,161 @@ io.on("connection", (socket) => {
 });
 
 // --- HTTP Endpoints (Added Video Specific) ---
+// Contact form submission endpoint
+app.post("/api/contact", async (req, res) => {
+  const requestId =
+    Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // short unique ID per request
 
+  console.log(
+    `[CONTACT:${requestId}] New contact request received from IP: ${req.ip || "unknown"}`,
+  );
+
+  try {
+    const { name, email, contactReason, subject, message, priority } = req.body;
+
+    // ── 1. Log incoming payload (sanitized - no full message)
+    console.log(`[CONTACT:${requestId}] Payload:`, {
+      name: name || "(missing)",
+      email: email || "(missing)",
+      contactReason: contactReason || "(missing)",
+      subject: subject || "(missing)",
+      priority: priority || "(missing)",
+      messageLength: message ? message.length : 0,
+    });
+
+    // ── 2. Validation
+    if (
+      !name ||
+      !email ||
+      !contactReason ||
+      !subject ||
+      !message ||
+      !priority
+    ) {
+      console.warn(`[CONTACT:${requestId}] Validation failed: missing fields`);
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required",
+      });
+    }
+
+    if (!/\S+@\S+\.\S+/.test(email)) {
+      console.warn(`[CONTACT:${requestId}] Invalid email format: ${email}`);
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid email address",
+      });
+    }
+
+    if (message.length < 20) {
+      console.warn(
+        `[CONTACT:${requestId}] Message too short (${message.length} chars)`,
+      );
+      return res.status(400).json({
+        success: false,
+        message: "Message must be at least 20 characters long",
+      });
+    }
+
+    const ticketNumber = generateTicketNumber();
+    const estimatedResponse = getEstimatedResponse(priority);
+    const userIP =
+      req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+
+    console.log(
+      `[CONTACT:${requestId}] Ticket created: ${ticketNumber} | Priority: ${priority} | Est. response: ${estimatedResponse} | IP: ${userIP}`,
+    );
+
+    // ── 3. Prepare emails
+    const userMailOptions = {
+      from: "rajibanavath@zohomail.in",
+      to: "rajibanavath@zohomail.in",
+      subject: `We've received your message - ${ticketNumber}`,
+      html: generateUserEmailHTML(req.body, ticketNumber, estimatedResponse),
+    };
+
+    const supportMailOptions = {
+      from: "rajibanavath@zohomail.in",
+      to: "rajibanavath@zohomail.in",
+      subject: `New Support Ticket: ${ticketNumber} - ${subject}`,
+      html: generateSupportEmailHTML({ ...req.body, ip: userIP }, ticketNumber),
+    };
+
+    console.log(`[CONTACT:${requestId}] Preparing to send:`);
+    console.log(`  → User email    : ${email}`);
+    console.log(`  → Support email  : ${supportMailOptions.to}`);
+    console.log(
+      `  → From           : ${process.env.SMTP_USER || "(SMTP_USER not set)"}`,
+    );
+
+    // ── 4. Actually send emails
+    console.log(`[CONTACT:${requestId}] Sending user confirmation email...`);
+    await transporter.sendMail(userMailOptions);
+    console.log(`[CONTACT:${requestId}] User email sent successfully`);
+
+    console.log(`[CONTACT:${requestId}] Sending support team notification...`);
+    await transporter.sendMail(supportMailOptions);
+    console.log(
+      `[CONTACT:${requestId}] Support notification sent successfully`,
+    );
+
+    // ── 5. Success response
+    console.log(
+      `[CONTACT:${requestId}] SUCCESS - Ticket ${ticketNumber} processed`,
+    );
+
+    res.json({
+      success: true,
+      message: "Message sent successfully!",
+      data: {
+        ticketNumber,
+        estimatedResponse,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error(`[CONTACT:${requestId}] ERROR during processing:`, {
+      message: error.message,
+      code: error.code,
+      command: error.command,
+      stack: error.stack
+        ? error.stack.split("\n").slice(0, 4).join("\n")
+        : undefined, // first 4 lines only
+    });
+
+    // More specific diagnostics
+    if (error.code === "EAUTH") {
+      console.error(`[CONTACT:${requestId}] SMTP Authentication failed`);
+      console.error(`  → Check SMTP_USER and SMTP_PASS in .env`);
+      console.error(
+        `  → Current SMTP_USER: ${process.env.SMTP_USER ? "set" : "MISSING"}`,
+      );
+      console.error(
+        `  → SMTP_PASS length: ${process.env.SMTP_PASS ? process.env.SMTP_PASS.length : "MISSING"}`,
+      );
+    } else if (error.code === "ECONNECTION") {
+      console.error(
+        `[CONTACT:${requestId}] SMTP Connection failed - check host/port/firewall`,
+      );
+      console.error(`  → Host: ${process.env.SMTP_HOST || "smtp.gmail.com"}`);
+      console.error(`  → Port: ${process.env.SMTP_PORT || 587}`);
+    } else if (error.code === "EENVELOPE") {
+      console.error(`[CONTACT:${requestId}] Invalid recipient address`);
+    } else if (error.response) {
+      console.error(
+        `[CONTACT:${requestId}] SMTP server response:`,
+        error.response,
+      );
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to send message. Please try again later.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      requestId, // helpful for user to report
+    });
+  }
+});
 // Health endpoint
 app.get("/health", (req, res) => {
   console.log(`[HTTP] GET /health from: ${req.ip}`, {
