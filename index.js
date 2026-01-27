@@ -712,31 +712,181 @@ function handleWebRTCOffer(socket, data) {
     safeEmit(socket, "webrtc-error", { error: err.message });
   }
 }
+
 function handleWebRTCAnswer(socket, data) {
-  const { to, sdp, callId, roomId } = data; // ADD roomId here
+  const { to, sdp, callId, roomId } = data; // Make sure roomId is included
   const from = socket.id;
 
   console.log(`[handleWebRTCAnswer] Received answer:`, {
     from,
     to,
     callId,
-    roomId, // Log it
+    roomId,
     sdpType: sdp?.type,
+    timestamp: Date.now()
   });
 
-  // ... existing code ...
+  try {
+    const user = activeUsers.get(from);
+    const partner = activeUsers.get(to);
 
-  // Forward answer to caller - INCLUDE ROOMID
-  console.log(`[handleWebRTCAnswer] Forwarding answer to: ${to}`);
-  const forwarded = safeEmit(partner.socket, "webrtc-answer", {
-    from,
-    sdp,
-    callId,
-    roomId, // ADD THIS LINE
-    timestamp: Date.now(),
-  });
+    if (!user || !partner) {
+      console.error(`[handleWebRTCAnswer] User or partner not found:`, {
+        userExists: !!user,
+        partnerExists: !!partner,
+        userId: from,
+        partnerId: to
+      });
+      safeEmit(socket, "webrtc-error", { 
+        error: "User or partner not found",
+        callId,
+        roomId 
+      });
+      return;
+    }
 
-  // ... rest of code ...
+    // Verify they are paired
+    if (user.partnerId !== to || partner.partnerId !== from) {
+      console.warn(`[handleWebRTCAnswer] Users are not properly paired:`, {
+        userPartnerId: user.partnerId,
+        expectedPartnerId: to,
+        partnerPartnerId: partner.partnerId,
+        expectedPartnerIdForPartner: from,
+        roomId: user.roomId
+      });
+      
+      // Check if they share the same room
+      if (user.roomId === partner.roomId && user.roomId) {
+        console.log(`[handleWebRTCAnswer] Users share same room, allowing answer`);
+      } else {
+        safeEmit(socket, "webrtc-error", { 
+          error: "Users are not properly paired",
+          callId,
+          roomId 
+        });
+        return;
+      }
+    }
+
+    // Update call status for both users
+    let callUpdated = false;
+    for (const [userId, call] of videoCalls.entries()) {
+      if (
+        call.callId === callId &&
+        (call.caller === to || call.callee === to)
+      ) {
+        console.log(`[handleWebRTCAnswer] Updating call status to answered:`, {
+          callId,
+          userId,
+          previousStatus: call.status,
+          roomId: call.roomId
+        });
+
+        call.status = "answered";
+        call.answerSdp = sdp;
+        call.answerTimestamp = Date.now();
+        
+        // Ensure roomId is set
+        if (!call.roomId && roomId) {
+          call.roomId = roomId;
+          console.log(`[handleWebRTCAnswer] Set roomId for call: ${roomId}`);
+        }
+        
+        videoCalls.set(userId, call);
+        callUpdated = true;
+
+        // Also update partner's call record
+        const partnerId = call.caller === to ? call.callee : call.caller;
+        if (videoCalls.has(partnerId)) {
+          const partnerCall = videoCalls.get(partnerId);
+          partnerCall.status = "answered";
+          partnerCall.answerSdp = sdp;
+          partnerCall.answerTimestamp = Date.now();
+          
+          // Ensure roomId is set for partner too
+          if (!partnerCall.roomId && roomId) {
+            partnerCall.roomId = roomId;
+          }
+          
+          videoCalls.set(partnerId, partnerCall);
+          console.log(
+            `[handleWebRTCAnswer] Updated partner's call record: ${partnerId}`,
+            { roomId: partnerCall.roomId }
+          );
+        }
+        break;
+      }
+    }
+
+    if (!callUpdated) {
+      console.warn(`[handleWebRTCAnswer] Call ${callId} not found, creating new record`);
+      
+      // Create new call record
+      const newCall = {
+        callId,
+        caller: to, // The original caller (to whom this answer is being sent)
+        callee: from, // The one sending the answer
+        status: "answered",
+        timestamp: Date.now(),
+        answerTimestamp: Date.now(),
+        sdp: null, // No offer SDP in this case
+        answerSdp: sdp,
+        roomId: roomId || user.roomId || partner.roomId,
+        metadata: {}
+      };
+      
+      videoCalls.set(from, newCall);
+      videoCalls.set(to, { ...newCall });
+      console.log(`[handleWebRTCAnswer] Created new call record:`, newCall);
+    }
+
+    // Forward answer to caller WITH ROOMID
+    console.log(`[handleWebRTCAnswer] Forwarding answer to: ${to}`, {
+      callId,
+      roomId: roomId || user.roomId || partner.roomId
+    });
+    
+    const forwarded = safeEmit(partner.socket, "webrtc-answer", {
+      from,
+      sdp,
+      callId,
+      roomId: roomId || user.roomId || partner.roomId, // CRITICAL: Include roomId
+      timestamp: Date.now()
+    });
+
+    console.log(
+      `[handleWebRTCAnswer] Answer forwarding result: ${forwarded ? "success" : "failed"}`,
+      { 
+        callId,
+        roomId,
+        fromSocket: from,
+        toSocket: to 
+      }
+    );
+    
+    // Update room with call info if needed
+    if (user.roomId && activeRooms.has(user.roomId)) {
+      const room = activeRooms.get(user.roomId);
+      if (!room.callId) {
+        room.callId = callId;
+        console.log(`[handleWebRTCAnswer] Updated room ${user.roomId} with callId: ${callId}`);
+      }
+    }
+
+  } catch (err) {
+    console.error("[handleWebRTCAnswer] Error:", err, {
+      from,
+      to,
+      callId,
+      roomId,
+      stack: err.stack,
+    });
+    safeEmit(socket, "webrtc-error", { 
+      error: err.message,
+      callId,
+      roomId 
+    });
+  }
 }
 
 function handleWebRTCIceCandidate(socket, data) {
