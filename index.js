@@ -712,91 +712,31 @@ function handleWebRTCOffer(socket, data) {
     safeEmit(socket, "webrtc-error", { error: err.message });
   }
 }
-
 function handleWebRTCAnswer(socket, data) {
-  const { to, sdp, callId } = data;
+  const { to, sdp, callId, roomId } = data; // ADD roomId here
   const from = socket.id;
 
   console.log(`[handleWebRTCAnswer] Received answer:`, {
     from,
     to,
     callId,
+    roomId, // Log it
     sdpType: sdp?.type,
   });
 
-  try {
-    const user = activeUsers.get(from);
-    const partner = activeUsers.get(to);
+  // ... existing code ...
 
-    if (!user || !partner) {
-      console.error(`[handleWebRTCAnswer] User or partner not found:`, {
-        userExists: !!user,
-        partnerExists: !!partner,
-      });
-      safeEmit(socket, "webrtc-error", { error: "User or partner not found" });
-      return;
-    }
+  // Forward answer to caller - INCLUDE ROOMID
+  console.log(`[handleWebRTCAnswer] Forwarding answer to: ${to}`);
+  const forwarded = safeEmit(partner.socket, "webrtc-answer", {
+    from,
+    sdp,
+    callId,
+    roomId, // ADD THIS LINE
+    timestamp: Date.now(),
+  });
 
-    // Update call status
-    let callUpdated = false;
-    for (const [userId, call] of videoCalls.entries()) {
-      if (
-        call.callId === callId &&
-        (call.caller === to || call.callee === to)
-      ) {
-        console.log(`[handleWebRTCAnswer] Updating call status to answered:`, {
-          callId,
-          userId,
-          previousStatus: call.status,
-        });
-
-        call.status = "answered";
-        call.answerSdp = sdp;
-        call.answerTimestamp = Date.now();
-        videoCalls.set(userId, call);
-        callUpdated = true;
-
-        // Also update partner's call record
-        const partnerId = call.caller === to ? call.callee : call.caller;
-        if (videoCalls.has(partnerId)) {
-          const partnerCall = videoCalls.get(partnerId);
-          partnerCall.status = "answered";
-          partnerCall.answerSdp = sdp;
-          partnerCall.answerTimestamp = Date.now();
-          videoCalls.set(partnerId, partnerCall);
-          console.log(
-            `[handleWebRTCAnswer] Updated partner's call record: ${partnerId}`,
-          );
-        }
-        break;
-      }
-    }
-
-    if (!callUpdated) {
-      console.warn(`[handleWebRTCAnswer] Call ${callId} not found`);
-    }
-
-    // Forward answer to caller
-    console.log(`[handleWebRTCAnswer] Forwarding answer to: ${to}`);
-    const forwarded = safeEmit(partner.socket, "webrtc-answer", {
-      from,
-      sdp,
-      callId,
-      timestamp: Date.now(),
-    });
-
-    console.log(
-      `[handleWebRTCAnswer] Answer forwarding result: ${forwarded ? "success" : "failed"}`,
-    );
-  } catch (err) {
-    console.error("[handleWebRTCAnswer] Error:", err, {
-      from,
-      to,
-      callId,
-      stack: err.stack,
-    });
-    safeEmit(socket, "webrtc-error", { error: err.message });
-  }
+  // ... rest of code ...
 }
 
 function handleWebRTCIceCandidate(socket, data) {
