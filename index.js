@@ -10,7 +10,11 @@ const MatchingEngine = require("./matching-engine");
 // --- Config ---
 const SOCKET_ORIGIN = process.env.SOCKET_ORIGIN || "http://localhost:3000";
 
-const ALLOWED_ORIGINS = ["http://localhost:3000", "http://13.60.191.64"];
+const ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://13.60.191.64",
+  "https://winkcc.vercel.app",
+];
 
 const PORT = process.env.PORT || 5000;
 const INACTIVE_THRESHOLD_MS = 5 * 60 * 1000;
