@@ -1550,7 +1550,11 @@ function updateStats() {
     };
 
     console.log(`[updateStats] Broadcasting stats:`, stats);
-    io.emit("stats-updated", stats);
+    
+    // BOTH events for compatibility
+    io.emit("stats", stats);  // Main event your client listens for
+    io.emit("stats-updated", stats);  // Backup event
+    
   } catch (err) {
     console.error("[updateStats] Error:", err);
   }
@@ -1582,6 +1586,27 @@ io.on("connection", (socket) => {
         console.log(`[Socket.IO] Heartbeat for: ${socket.id}`);
       }
     });
+
+
+
+        // Send initial stats to the newly connected client
+    const initialStats = {
+      online: Array.from(activeUsers.values()).filter(
+        (u) => u.status === "ready" || u.status === "searching",
+      ).length,
+      timestamp: Date.now(),
+      activeChats: Array.from(userPairs.keys()).length / 2,
+      videoCalls: Array.from(videoCalls.values()).filter(
+        (c) => c.status === "answered"
+      ).length / 2,
+      searching: Array.from(activeUsers.values()).filter(
+        (u) => u.status === "searching",
+      ).length,
+    };
+    
+    console.log(`[Socket.IO] Sending initial stats to ${socket.id}:`, initialStats);
+    safeEmit(socket, "stats", initialStats);
+
 
     // Core events
     socket.on("register", (userData) => {
