@@ -7,7 +7,7 @@ const cors = require("cors");
 const { v4: uuidv4 } = require("uuid");
 const MatchingEngine = require("./matching-engine");
 const nodemailer = require("nodemailer");
-require('dotenv').config()
+require("dotenv").config();
 
 const {
   generateTicketNumber,
@@ -24,7 +24,7 @@ const ALLOWED_ORIGINS = [
   "https://winkcc.vercel.app",
   "https://blinkchatapp.vercel.app/",
   "https://omeglechatapp.vercel.app",
-  "https://omeglepro.vercel.app/",
+  "https://omeglepro.vercel.app",
 ];
 
 const PORT = process.env.PORT || 5000;
@@ -76,16 +76,16 @@ app.use(express.json());
 
 // Configure Nodemailer transporter
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
   port: process.env.SMTP_PORT || 465,
   secure: true,
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
+    pass: process.env.SMTP_PASS,
   },
   tls: {
-    rejectUnauthorized: false
-  }
+    rejectUnauthorized: false,
+  },
 });
 
 // Email Transport - Recommended for Zoho personal/free accounts
