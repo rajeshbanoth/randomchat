@@ -7,6 +7,8 @@ const cors = require("cors");
 const { v4: uuidv4 } = require("uuid");
 const MatchingEngine = require("./matching-engine");
 const nodemailer = require("nodemailer");
+require('dotenv').config()
+
 const {
   generateTicketNumber,
   getEstimatedResponse,
@@ -22,6 +24,7 @@ const ALLOWED_ORIGINS = [
   "https://winkcc.vercel.app",
   "https://blinkchatapp.vercel.app/",
   "https://omeglechatapp.vercel.app",
+  "https://omeglepro.vercel.app/",
 ];
 
 const PORT = process.env.PORT || 5000;
@@ -72,30 +75,30 @@ app.use(
 app.use(express.json());
 
 // Configure Nodemailer transporter
-// const transporter = nodemailer.createTransport({
-//   host: process.env.SMTP_HOST || 'smtp.gmail.com',
-//   port: process.env.SMTP_PORT || 587,
-//   secure: false,
-//   auth: {
-//     user: process.env.SMTP_USER,
-//     pass: process.env.SMTP_PASS
-//   },
-//   tls: {
-//     rejectUnauthorized: false
-//   }
-// });
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: process.env.SMTP_PORT || 465,
+  secure: true,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS
+  },
+  tls: {
+    rejectUnauthorized: false
+  }
+});
 
 // Email Transport - Recommended for Zoho personal/free accounts
 // Email Transport
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+// const transporter = nodemailer.createTransport({
+//   host: process.env.SMTP_HOST,
+//   port: process.env.SMTP_PORT,
+//   secure: false,
+//   auth: {
+//     user: process.env.SMTP_USER,
+//     pass: process.env.SMTP_PASS,
+//   },
+// });
 
 // Verify on startup - add this immediately after creating transporter
 transporter.verify((error, success) => {
@@ -322,8 +325,7 @@ function startSearch(socketId, options = {}) {
     const socket = userWrapper.socket;
     const chatMode = options.mode || "text";
     // 🔑 SAVE chat mode on user profile (VERY IMPORTANT)
-userWrapper.profile.chatMode = chatMode;
-
+    userWrapper.profile.chatMode = chatMode;
 
     console.log(`[startSearch] User details:`, {
       username: userWrapper.profile.username,
@@ -393,16 +395,20 @@ userWrapper.profile.chatMode = chatMode;
 
 // --- Attempt Immediate Match (Updated) ---
 function attemptImmediateMatch(userId) {
-  console.log(`[attemptImmediateMatch] Attempting immediate match for: ${userId}`);
+  console.log(
+    `[attemptImmediateMatch] Attempting immediate match for: ${userId}`,
+  );
 
   try {
     const user = activeUsers.get(userId);
     if (!user || user.status !== "searching") {
-      console.warn(`[attemptImmediateMatch] User not found or not searching: ${userId}`);
+      console.warn(
+        `[attemptImmediateMatch] User not found or not searching: ${userId}`,
+      );
       return false;
     }
 
-    console.log(user,"checking userer")
+    console.log(user, "checking userer");
 
     const userChatMode = user.profile.chatMode; // "video" | "text"
     console.log(`[attemptImmediateMatch] User chat mode: ${userChatMode}`);
@@ -418,37 +424,30 @@ function attemptImmediateMatch(userId) {
       match = matchingEngine.findMatch(userId);
     }
 
-
     if (match && match.partnerId) {
-  const partner = activeUsers.get(match.partnerId);
+      const partner = activeUsers.get(match.partnerId);
 
-  // 🚫 HARD BLOCK mixed mode
-  if (!partner || partner.profile.chatMode !== userChatMode) {
-    console.warn(
-      "[STRICT MODE BLOCK]",
-      userChatMode,
-      "≠",
-      partner?.profile?.chatMode
-    );
-    return false;
-  }
+      // 🚫 HARD BLOCK mixed mode
+      if (!partner || partner.profile.chatMode !== userChatMode) {
+        console.warn(
+          "[STRICT MODE BLOCK]",
+          userChatMode,
+          "≠",
+          partner?.profile?.chatMode,
+        );
+        return false;
+      }
 
-  console.log("[STRICT MODE PASS] Matching users:", {
-    user: userId,
-    partner: match.partnerId,
-    mode: userChatMode,
-  });
+      console.log("[STRICT MODE PASS] Matching users:", {
+        user: userId,
+        partner: match.partnerId,
+        mode: userChatMode,
+      });
 
-  instantMatch(
-    userId,
-    match.partnerId,
-    match.score || 50,
-    userChatMode
-  );
+      instantMatch(userId, match.partnerId, match.score || 50, userChatMode);
 
-  return true;
-}
-
+      return true;
+    }
 
     // if (match && match.partnerId) {
     //   console.log(`[attemptImmediateMatch] Match found`, match);
@@ -479,7 +478,6 @@ function attemptImmediateMatch(userId) {
     return false;
   }
 }
-
 
 // Start matching interval for a user
 function startMatchingInterval(userId) {
@@ -1550,11 +1548,10 @@ function updateStats() {
     };
 
     console.log(`[updateStats] Broadcasting stats:`, stats);
-    
+
     // BOTH events for compatibility
-    io.emit("stats", stats);  // Main event your client listens for
-    io.emit("stats-updated", stats);  // Backup event
-    
+    io.emit("stats", stats); // Main event your client listens for
+    io.emit("stats-updated", stats); // Backup event
   } catch (err) {
     console.error("[updateStats] Error:", err);
   }
@@ -1587,26 +1584,26 @@ io.on("connection", (socket) => {
       }
     });
 
-
-
-        // Send initial stats to the newly connected client
+    // Send initial stats to the newly connected client
     const initialStats = {
       online: Array.from(activeUsers.values()).filter(
         (u) => u.status === "ready" || u.status === "searching",
       ).length,
       timestamp: Date.now(),
       activeChats: Array.from(userPairs.keys()).length / 2,
-      videoCalls: Array.from(videoCalls.values()).filter(
-        (c) => c.status === "answered"
-      ).length / 2,
+      videoCalls:
+        Array.from(videoCalls.values()).filter((c) => c.status === "answered")
+          .length / 2,
       searching: Array.from(activeUsers.values()).filter(
         (u) => u.status === "searching",
       ).length,
     };
-    
-    console.log(`[Socket.IO] Sending initial stats to ${socket.id}:`, initialStats);
-    safeEmit(socket, "stats", initialStats);
 
+    console.log(
+      `[Socket.IO] Sending initial stats to ${socket.id}:`,
+      initialStats,
+    );
+    safeEmit(socket, "stats", initialStats);
 
     // Core events
     socket.on("register", (userData) => {
@@ -2084,15 +2081,15 @@ app.post("/api/contact", async (req, res) => {
 
     // ── 3. Prepare emails
     const userMailOptions = {
-      from: "rajibanavath@zohomail.in",
-      to: "rajibanavath@zohomail.in",
+      from: process.env.COMPANY_MAIL || "rajibanavath@zohomail.in",
+      to: email,
       subject: `We've received your message - ${ticketNumber}`,
       html: generateUserEmailHTML(req.body, ticketNumber, estimatedResponse),
     };
 
     const supportMailOptions = {
-      from: "rajibanavath@zohomail.in",
-      to: "rajibanavath@zohomail.in",
+      from: process.env.COMPANY_MAIL || "rajibanavath@zohomail.in",
+      to: process.env.SUPPORT_MAIL || "banothrajesh97@gmail.com",
       subject: `New Support Ticket: ${ticketNumber} - ${subject}`,
       html: generateSupportEmailHTML({ ...req.body, ip: userIP }, ticketNumber),
     };

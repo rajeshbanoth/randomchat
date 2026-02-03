@@ -311,7 +311,7 @@ export const generateUserEmailHTML = (data, ticketNumber, estimatedResponse) => 
           <h4 style="color: #92400E; margin-bottom: 10px;">💡 Need Immediate Help?</h4>
           <p style="color: #92400E;">
             For urgent safety concerns or emergencies, please email us immediately at 
-            <strong style="color: #DC2626;">emergency@omeglepro.com</strong>
+            <strong style="color: #DC2626;">banothrajesh1997@gmail.com</strong>
           </p>
         </div>
         
@@ -325,7 +325,7 @@ export const generateUserEmailHTML = (data, ticketNumber, estimatedResponse) => 
         <div class="contact-info">
           <div class="contact-item">
             <span style="color: #60A5FA;">📧</span>
-            <span>support@omeglepro.com</span>
+            <span>rajibanavath@zohomail.in</span>
           </div>
           <div class="contact-item">
             <span style="color: #10B981;">🕒</span>
